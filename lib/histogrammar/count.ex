@@ -4,13 +4,7 @@ defmodule Histogrammar.Counting do
 end
 
 defimpl Poison.Encoder, for: Histogrammar.Counting do
-  def encode(%Histogrammar.Counting{} = counting, options) do
-    Poison.Encoder.Map.encode(%{
-      version: Histogrammar.specification_version,
-      type: "Count",
-      data: counting.entries
-    }, options)
-  end
+  defdelegate encode(counting, options), to: Histogrammar.Count
 end
 
 defmodule Histogrammar.Counted do
@@ -18,18 +12,18 @@ defmodule Histogrammar.Counted do
 end
 
 defimpl Poison.Encoder, for: Histogrammar.Counted do
-  def encode(%Histogrammar.Counted{} = counted, options) do
-    Poison.Encoder.Map.encode(%{
-      version: Histogrammar.specification_version,
-      type: "Count",
-      data: counted.entries
-    }, options)
-  end
+  defdelegate encode(counted, options), to: Histogrammar.Count
+end
+
+defimpl Collectable, for: Histogrammar.Counting do
+  def into(original), do: {original, Histogrammar.Primitive.collector_fun(Histogrammar.Count)}
 end
 
 defmodule Histogrammar.Count do
   alias Histogrammar.Counting
   alias Histogrammar.Counted
+
+  @histogrammar_type "Count"
 
   def ing(transform \\ &(&1)) do
     %Counting{transform: transform}
@@ -51,4 +45,17 @@ defmodule Histogrammar.Count do
 
   defp do_combine(a, b) when is_number(a) and is_number(b),
   do: %Counted{entries: a + b}
+
+  def encode(struct, options) do
+    Poison.Encoder.Map.encode(%{
+      version: Histogrammar.specification_version,
+      type: @histogrammar_type,
+      data: encoder_data(struct)
+    }, options)
+  end
+
+  def encoder_data(%Counting{} = counting), do: counting |> do_encoder_data
+  def encoder_data(%Counted{} = counted), do: counted |> do_encoder_data
+
+  defp do_encoder_data(%{entries: entries}), do: entries
 end

@@ -97,9 +97,7 @@ defmodule Histogrammar.CountTest do
 
   property :present_tense_encoding do
     for_all weights in list(int()) do
-      counting = Enum.reduce(weights, Count.ing(), fn (weight, counting) ->
-        Count.fill(counting, weight, 1.0)
-      end)
+      counting = Enum.into(weights, Count.ing())
       Poison.encode!(counting) == ~s({"version":"1.0","type":"Count","data":#{length(weights) * 1.0}})
     end
   end

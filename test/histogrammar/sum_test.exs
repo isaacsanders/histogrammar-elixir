@@ -7,10 +7,7 @@ defmodule Histogrammar.SumTest do
   doctest Histogrammar.Sum
 
   def uniform_present_tense(xs) do
-    Enum.reduce(xs, Sum.ing(&Util.identity/1), fn
-      (x, summing) ->
-        Sum.fill(summing, x, 1.0)
-    end)
+    Enum.into(xs, Sum.ing(&Util.identity/1))
   end
 
   def randomly_weighted_present_tense(weights) do
@@ -23,17 +20,22 @@ defmodule Histogrammar.SumTest do
   property :fill_constantly_weighted do
     for_all xs in list(int()) do
       summing = uniform_present_tense(xs)
-      summing.entries == length(xs)
+      sum = Enum.reduce(xs, 0.0, fn
+        (weight, sum) ->
+          sum + weight
+      end)
+      summing.entries == length(xs) and sum == summing.sum
     end
   end
 
   property :fill_randomly_weighted do
     for_all weights in list(int()) do
       summing = randomly_weighted_present_tense(weights)
-      Enum.reduce(weights, 0.0, fn
+      sum = Enum.reduce(weights, 0.0, fn
         (weight, sum) ->
           if weight > 0.0, do: sum + weight, else: sum
-      end) == summing.entries
+      end)
+      summing.entries == sum and sum == summing.sum
     end
   end
 
@@ -89,9 +91,7 @@ defmodule Histogrammar.SumTest do
   property :transforming_fill do
     for_all weights in list(int()) do
       transform = fn (x) -> x * x end
-      summing = Enum.reduce(weights, Sum.ing(transform), fn (weight, summing) ->
-        Sum.fill(summing, weight, 1.0)
-      end)
+      summing = Enum.into(weights, Sum.ing(transform))
       sum_of_squares = Enum.reduce(weights, 0.0, &(transform.(&1) + &2))
       summing.sum == sum_of_squares
     end
@@ -99,35 +99,33 @@ defmodule Histogrammar.SumTest do
 
   property :present_tense_encoding do
     for_all weights in list(int()) do
-      summing = Enum.reduce(weights, Sum.ing(&Util.identity/1), fn (weight, summing) ->
-        Sum.fill(summing, weight, 1.0)
-      end)
-      sum = Enum.reduce(weights, 0.0, &(&1 + &2))
-      Poison.encode!(summing) == ~s({"version":"1.0","type":"Sum","data":{"sum":#{sum},"entries":#{length(weights) * 1.0}}})
+      summing = uniform_present_tense(weights)
+      actual = Poison.encode!(summing) |> Poison.decode!(keys: :atoms)
+      actual.data == Sum.encoder_data(summing)
     end
   end
 
   property :named_present_tense_encoding do
     for_all weights in list(int()) do
-      summing = Enum.reduce(weights, Sum.ing(&Util.identity/1, "myfunc"), fn (weight, summing) ->
-        Sum.fill(summing, weight, 1.0)
-      end)
-      sum = Enum.reduce(weights, 0.0, &(&1 + &2))
-      Poison.encode!(summing) == ~s({"version":"1.0","type":"Sum","data":{"sum":#{sum},"name":"myfunc","entries":#{length(weights) * 1.0}}})
+      summing = Enum.into(weights, Sum.ing(&Util.identity/1, "myfunc"))
+      actual = Poison.encode!(summing) |> Poison.decode!(keys: :atoms)
+      actual.data == Sum.encoder_data(summing)
     end
   end
 
   property :past_tense_encoding do
     for_all entries in int() do
-      counted = Sum.ed(abs(entries), entries)
-      Poison.encode!(counted) == ~s({"version":"1.0","type":"Sum","data":{"sum":#{entries},"entries":#{abs(entries)}}})
+      summed = Sum.ed(abs(entries), entries)
+      actual = Poison.encode!(summed) |> Poison.decode!(keys: :atoms)
+      actual.data == Sum.encoder_data(summed)
     end
   end
 
   property :named_past_tense_encoding do
-    for_all entries in int() do
-      counted = Sum.ed(abs(entries), entries, "myfunc")
-      Poison.encode!(counted) == ~s({"version":"1.0","type":"Sum","data":{"sum":#{entries},"name":"myfunc","entries":#{abs(entries)}}})
+    for_all entries in such_that(f in float() when f > 0.0) do
+      summed = Sum.ed(abs(entries), entries, "myfunc")
+      actual = Poison.encode!(summed) |> Poison.decode!(keys: :atoms)
+      actual.data == Sum.encoder_data(summed)
     end
   end
 end

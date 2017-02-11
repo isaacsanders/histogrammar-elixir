@@ -6,18 +6,7 @@ defmodule Histogrammar.Summing do
 end
 
 defimpl Poison.Encoder, for: Histogrammar.Summing do
-  def encode(%Histogrammar.Summing{} = summing, options) do
-    data = if is_nil(summing.name) do
-      %{ sum: summing.sum, entries: summing.entries, }
-    else
-      %{ sum: summing.sum, entries: summing.entries, name: summing.name, }
-    end
-    Poison.Encoder.Map.encode(%{
-      version: Histogrammar.specification_version,
-      type: "Sum",
-      data: data
-    }, options)
-  end
+  defdelegate encode(summing, options), to: Histogrammar.Sum
 end
 
 defmodule Histogrammar.Summed do
@@ -26,29 +15,24 @@ defmodule Histogrammar.Summed do
 end
 
 defimpl Poison.Encoder, for: Histogrammar.Summed do
-  def encode(%Histogrammar.Summed{} = summed, options) do
-    data = if is_nil(summed.name) do
-      %{ sum: summed.sum, entries: summed.entries, }
-    else
-      %{ sum: summed.sum, entries: summed.entries, name: summed.name, }
-    end
-    Poison.Encoder.Map.encode(%{
-      version: Histogrammar.specification_version,
-      type: "Sum",
-      data: data
-    }, options)
-  end
+  defdelegate encode(summed, options), to: Histogrammar.Sum
+end
+
+defimpl Collectable, for: Histogrammar.Summing do
+  def into(original), do: {original, Histogrammar.Primitive.collector_fun(Histogrammar.Sum)}
 end
 
 defmodule Histogrammar.Sum do
   alias Histogrammar.Summing
   alias Histogrammar.Summed
 
+  @histogrammar_type "Sum"
+
   def fill(%Summing{entries: entries, sum: sum} = summing, datum, weight) when is_number(weight) and weight > 0.0 do
       q = summing.quantity.(datum)
       %{ summing | entries: entries + weight, sum: sum + q }
   end
-  def fill(%Summing{} = summing, datum, weight) when is_number(weight), do: summing
+  def fill(%Summing{} = summing, _datum, weight) when is_number(weight), do: summing
 
   def combine(%Summing{} = a, %Summing{} = b), do: do_combine(a, b)
   def combine(%Summing{} = a, %Summed{} = b), do: do_combine(a, b)
@@ -65,4 +49,18 @@ defmodule Histogrammar.Sum do
   def ed(entries, sum, name \\ nil) when is_number(entries) and is_number(sum) do
     %Summed{entries: entries, sum: sum, name: name}
   end
+
+  def encode(struct, options) do
+    Poison.Encoder.Map.encode(%{
+      version: Histogrammar.specification_version,
+      type: @histogrammar_type,
+      data: encoder_data(struct)
+    }, options)
+  end
+
+  def encoder_data(%Summing{} = summing), do: summing |> Map.from_struct |> do_encoder_data
+  def encoder_data(%Summed{} = summed), do: summed |> Map.from_struct |> do_encoder_data
+
+  defp do_encoder_data(%{ name: name } = data) when is_nil(name), do: Map.take(data, [:sum, :entries])
+  defp do_encoder_data(data), do: Map.take(data, [:sum, :entries, :name])
 end
