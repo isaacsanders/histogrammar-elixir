@@ -1,61 +1,47 @@
 defmodule Histogrammar.Counting do
   defstruct transform: &Histogrammar.Util.identity/1,
             entries: 0.0
-end
 
-defimpl Poison.Encoder, for: Histogrammar.Counting do
-  defdelegate encode(counting, options), to: Histogrammar.Count
+  defimpl Histogrammar.PresentTense, for: __MODULE__ do
+    alias Histogrammar.Counting
+
+    def fill(%Counting{} = counting, _datum, weight) when weight > 0.0 do
+      %{ counting | entries: counting.entries + counting.transform.(weight) }
+    end
+    def fill(counting, _datum, _weight), do: counting
+
+    def to_past_tense(%Counting{ entries: entries }) do
+      Histogrammar.Count.ed(entries)
+    end
+  end
 end
 
 defmodule Histogrammar.Counted do
   defstruct entries: 0.0
-end
 
-defimpl Poison.Encoder, for: Histogrammar.Counted do
-  defdelegate encode(counted, options), to: Histogrammar.Count
-end
+  defimpl Histogrammar.PastTense, for: __MODULE__ do
+    def combine(%Histogrammar.Counted{} = first,
+                %Histogrammar.Counted{} = second) do
+      Histogrammar.Count.ed(first.entries + second.entries)
+    end
 
-defimpl Collectable, for: Histogrammar.Counting do
-  def into(original), do: {original, Histogrammar.Primitive.collector_fun(Histogrammar.Count)}
+    def encoder_data(%Histogrammar.Counted{ entries: entries }), do: entries
+  end
 end
 
 defmodule Histogrammar.Count do
-  alias Histogrammar.Counting
-  alias Histogrammar.Counted
+  use Histogrammar.Primitive,
+    histogrammar_type: "Count",
+    present_tense: Histogrammar.Counting,
+    past_tense: Histogrammar.Counted
 
-  @histogrammar_type "Count"
-
-  def ing(transform \\ &(&1)) do
-    %Counting{transform: transform}
-  end
+  def ing(),
+    do: ing(&Histogrammar.Util.identity/1)
+  def ing(transform)
+    when is_function(transform, 1),
+    do: %Histogrammar.Counting{transform: transform, entries: 0.0}
 
   def ed(entries) do
-    %Counted{entries: entries}
+    %Histogrammar.Counted{entries: entries}
   end
-
-  def fill(%Counting{entries: entries, transform: transform} = counting, _datum, weight) when weight > 0,
-  do: %{ counting | entries: entries + transform.(weight) }
-
-  def fill(%Counting{} = counting, _datum, _weight), do: counting
-
-  def combine(%Counting{entries: a}, %Counting{entries: b}), do: do_combine(a, b)
-  def combine(%Counting{entries: a}, %Counted{entries: b}), do: do_combine(a, b)
-  def combine(%Counted{entries: a}, %Counting{entries: b}), do: do_combine(a, b)
-  def combine(%Counted{entries: a}, %Counted{entries: b}), do: do_combine(a, b)
-
-  defp do_combine(a, b) when is_number(a) and is_number(b),
-  do: %Counted{entries: a + b}
-
-  def encode(struct, options) do
-    Poison.Encoder.Map.encode(%{
-      version: Histogrammar.specification_version,
-      type: @histogrammar_type,
-      data: encoder_data(struct)
-    }, options)
-  end
-
-  def encoder_data(%Counting{} = counting), do: counting |> do_encoder_data
-  def encoder_data(%Counted{} = counted), do: counted |> do_encoder_data
-
-  defp do_encoder_data(%{entries: entries}), do: entries
 end

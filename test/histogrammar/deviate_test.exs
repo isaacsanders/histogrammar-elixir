@@ -1,12 +1,12 @@
 defmodule Histogrammar.DeviateTest do
   use ExUnit.Case, async: false
-  use ExCheck
+  use Quixir
   alias Histogrammar.Deviate
   alias Histogrammar.Average
   alias Histogrammar.Util
 
   doctest Histogrammar.Deviate
-  @threshold 1.0e-10
+  @threshold 1.0e-9
 
   def uniform_present_tense(xs) do
     Enum.into(xs, Deviate.ing(&Util.identity/1))
@@ -14,16 +14,18 @@ defmodule Histogrammar.DeviateTest do
 
   def randomly_weighted_present_tense(weights) do
     Enum.reduce(weights, Deviate.ing(&Util.identity/1), fn
-      (weight, averaging) ->
-        Deviate.fill(averaging, weight, weight)
+      (weight, deviating) ->
+        Histogrammar.fill(deviating, weight, weight)
     end)
   end
 
   def check_combine(first, second, expected) do
     case {first.mean, second.mean} do
       {nil, nil} -> expected.entries == 0.0 and is_nil(expected.mean)
-      {nil, _} -> expected == second
-      {_, nil} -> expected == first
+      {nil, _} ->
+        Histogrammar.encoder_data(expected) == Histogrammar.encoder_data(second)
+      {_, nil} ->
+        Histogrammar.encoder_data(expected) == Histogrammar.encoder_data(first)
       _ ->
         entries = first.entries + second.entries
         expected.entries == entries and
@@ -32,147 +34,140 @@ defmodule Histogrammar.DeviateTest do
     end
   end
 
-  property :fill_one do
-    for_all x in float() do
+  test :fill_one do
+    ptest x: float() do
       initial = Deviate.ing(&Util.identity/1)
-      case Deviate.fill(initial, x, 1.0) do
+      case Histogrammar.fill(initial, x, 1.0) do
         deviating ->
-          abs(deviating.mean - x) < @threshold and deviating.variance == 0.0
+          assert abs(deviating.mean - x) < @threshold and deviating.variance == 0.0
       end
     end
   end
 
-  property :fill_constantly_weighted do
-    for_all xs in such_that(xxs in list(float()) when length(xxs) > 0) do
-      averaging = uniform_present_tense(xs)
+  test :fill_constantly_weighted do
+    ptest xs: list(min: 1, max: 100, of: float()) do
+      deviating = uniform_present_tense(xs)
       mean = Enum.reduce(xs, 0.0, fn
         (weight, sum) ->
           sum + weight
       end) / (1.0 * length(xs))
-      averaging.entries == length(xs) and
-      abs(averaging.mean - mean) < @threshold
+      assert deviating.entries == length(xs) and
+        abs(deviating.mean - mean) < @threshold
     end
   end
 
-  property :fill_randomly_weighted do
-    for_all weights in such_that(wweights in list(float()) when length(wweights) > 0) do
-      averaging = weights
-                  |> Enum.filter(&(&1 > 0))
+  test :fill_randomly_weighted do
+    ptest weights: list(min: 1, max: 100, of: float()) do
+      deviating = weights
                   |> randomly_weighted_present_tense
       if length(weights |> Enum.filter(&(&1 > 0))) == 0 do
-        is_nil(averaging.mean)
+        assert is_nil(deviating.mean)
       else
         sum = Enum.reduce(weights, 0.0, fn
           (weight, sum) ->
             if weight > 0.0, do: sum + :math.pow(weight, 2), else: sum
         end)
-        mean = sum / averaging.entries
-        abs(averaging.mean - mean) < @threshold
+        mean = sum / deviating.entries
+        assert abs(deviating.mean - mean) < @threshold
       end
     end
   end
 
-  property :past_tense_combine do
-    for_all {a, b} in such_that({q, p} in {float(), float()} when q > 0 and p > 0) do
+  test :past_tense_combine do
+    ptest a: float(min: 1.0), b: float(min: 1.0) do
       x = Deviate.ed(a, a, :math.sqrt(a))
       y = Deviate.ed(b, b, :math.sqrt(b))
-      z = Deviate.combine(x, y)
+      z = Histogrammar.combine(x, y)
       mean = (a * a + b * b) / a + b
-      z.mean - mean < @threshold
+      assert z.mean - mean < @threshold
+      check_combine(x, y, z)
     end
   end
 
-  property :uniform_present_tense_combine do
-    for_all {a, b} in {list(float()), list(float())} do
+  test :uniform_present_tense_combine do
+    ptest a: list(max: 100, of: float()), b: list(max: 100, of: float()) do
       x = uniform_present_tense(a)
       y = uniform_present_tense(b)
-      z = Deviate.combine(x, y)
+      z = Histogrammar.combine(x, y)
       if is_nil(z.mean) do
-        length(a) + length(b) == 0
+        assert length(a) + length(b) == 0
       else
         mean = Enum.reduce(a ++ b, 0.0, fn (weight, sum) ->
           weight + sum
         end) / length(a ++ b)
-        z.mean - mean < @threshold
+        assert z.mean - mean < @threshold
       end
+      assert check_combine(x, y, z)
     end
   end
 
-  property :mixed_present_tense_combine do
-    for_all {a, b} in {list(float()), list(float())} do
+  test :mixed_present_tense_combine do
+    ptest a: list(max: 100, of: float()), b: list(max: 100, of: float()) do
       x = uniform_present_tense(a)
       y = randomly_weighted_present_tense(b)
-      z = Deviate.combine(x, y)
+      z = Histogrammar.combine(x, y)
 
-      case {x.mean, y.mean} do
-        {nil, nil} -> z.entries == 0.0 and is_nil(z.mean)
-        {nil, _} -> z == y
-        {_, nil} -> z == x
-        _ ->
-          entries = x.entries + y.entries
-          z.entries == entries and
-          (z.mean - (x.mean * x.entries + y.mean * y.entries) / entries) < @threshold
-      end
+      assert check_combine(x, y, z)
     end
   end
 
-  property :random_present_tense_combine do
-    for_all {a, b} in {list(float()), list(float())} do
+  test :random_present_tense_combine do
+    ptest a: list(max: 100, of: float()), b: list(max: 100, of: float()) do
       x = randomly_weighted_present_tense(a)
       y = randomly_weighted_present_tense(b)
-      z = Deviate.combine(x, y)
+      z = Histogrammar.combine(x, y)
 
-      check_combine(x, y, z)
+      assert check_combine(x, y, z)
     end
   end
 
-  property :mixed_tense_combine do
-    for_all {weights, b} in {list(float()), float()} do
+  test :mixed_tense_combine do
+    ptest weights: list(of: float()), b: float() do
       x = uniform_present_tense(weights)
       y = Deviate.ed(abs(b), if(b == 0.0, do: nil, else: b), if(b == 0.0, do: nil, else: :math.sqrt(abs(b))))
-      z = Deviate.combine(x, y)
-      check_combine(x, y, z)
+      z = Histogrammar.combine(x, y)
+      assert check_combine(x, y, z)
     end
   end
 
-  property :transforming_fill do
-    for_all weights in such_that(l in list(float()) when length(l) > 0) do
+  test :transforming_fill do
+    ptest weights: list(min: 1, max: 100, of: float()) do
       transform = fn (x) -> x * x end
       deviating = Enum.into(weights, Deviate.ing(transform))
       averaging = Enum.into(weights, Average.ing(transform))
-      deviating.mean == averaging.mean
+      assert deviating.mean == averaging.mean
     end
   end
 
-  property :present_tense_encoding do
-    for_all weights in list(float()) do
+  test :present_tense_encoding do
+    ptest weights: list(max: 100, of: float()) do
       expected = uniform_present_tense(weights)
       actual = Poison.encode!(expected) |> Poison.decode!(keys: :atoms)
-      actual.data == Deviate.encoder_data(expected)
+      assert actual.data == Histogrammar.encoder_data(expected)
     end
   end
 
-  property :named_present_tense_encoding do
-    for_all weights in list(float()) do
-      expected = %{ uniform_present_tense(weights) | name: "myfunc" }
+  test :named_present_tense_encoding do
+    ptest weights: list(max: 100, of: float()) do
+      expected = Enum.into(weights, Deviate.ing(&Util.identity/1, "myfunc"))
       actual = Poison.encode!(expected) |> Poison.decode!(keys: :atoms)
-      actual.data == Deviate.encoder_data(expected)
+      assert actual.data == Histogrammar.encoder_data(expected)
     end
   end
 
-  property :past_tense_encoding do
-    for_all entries in such_that(f in float() when f > 0.0) do
+  test :past_tense_encoding do
+    ptest entries: float(min: 1.0) do
       expected = Deviate.ed(abs(entries), entries, :math.sqrt(entries))
       actual = Poison.encode!(expected) |> Poison.decode!(keys: :atoms)
-      actual.data == Deviate.encoder_data(expected)
+      assert actual.data == Histogrammar.encoder_data(expected)
     end
   end
 
-  property :named_past_tense_encoding do
-    for_all entries in such_that(f in float() when f > 0.0) do
+  test :named_past_tense_encoding do
+    ptest entries: float(min: 1.0) do
       deviated = Deviate.ed(abs(entries), entries, :math.sqrt(entries), "myfunc")
       actual = Poison.encode!(deviated) |> Poison.decode!(keys: :atoms)
-      actual.data == Deviate.encoder_data(deviated)
+      assert actual.data == Histogrammar.encoder_data(deviated)
     end
   end
 
